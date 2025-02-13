@@ -305,6 +305,8 @@ extern QSPIFlash * const QSPI_FLASH;
 extern ICE40LPDevice * const ICE40LP;
 extern SPISlavePort * const DIALOG_SPI;
 
+extern MicDevice * const MIC;
+
 #if BOARD_CUTTS_BB
 extern TouchSensor * const EWD1000;
 #endif

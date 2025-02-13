@@ -238,4 +238,6 @@ extern const TemperatureSensor * const TEMPERATURE_SENSOR;
 extern QSPIPort * const QSPI;
 extern QSPIFlash * const QSPI_FLASH;
 
+extern MicDevice * const MIC;
+
 extern SPISlavePort * const DIALOG_SPI;
