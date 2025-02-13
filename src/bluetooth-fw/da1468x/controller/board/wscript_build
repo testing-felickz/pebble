@@ -1,0 +1,27 @@
+def _build_board(source_file, name, config_h, idx):
+    bld.objects(
+        name=name,
+        source=[source_file],
+        use=['dialog_sdk_includes'],
+        export_includes=['include'],
+        includes=['include'],
+        inject_include_files=[config_h],
+        idx=idx,
+    )
+
+board = bld.env.BOARD
+if board in ('silk_evt', 'silk_bb', 'silk_bb2', 'silk'):
+    _build_board('board_silk.c', 'dialog_board_main',
+                 '../main/config/custom_config_main.h', 3000)
+    _build_board('board_silk.c', 'dialog_board_boot',
+                 '../boot/config/custom_config_boot.h', 4000)
+elif board in ('robert_bb', 'robert_bb2', 'robert_evt', 'cutts_bb'):
+    _build_board('board_robert.c', 'dialog_board_main',
+                 '../main/config/custom_config_main.h', 3000)
+    _build_board('board_robert.c', 'dialog_board_boot',
+                 '../boot/config/custom_config_boot.h', 4000)
+else:
+    print bld.env
+    bld.fatal('Unknown board {}'.format(board))
+
+# vim:filetype=python

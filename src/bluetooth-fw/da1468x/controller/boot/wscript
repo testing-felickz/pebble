@@ -1,0 +1,79 @@
+import sys
+
+import waftools.objcopy
+
+from resources.types.resource_definition import ResourceDefinition
+from resources.types.resource_object import ResourceObject
+
+CUSTOM_CONFIG_H_PATH = 'config/custom_config_boot.h'
+
+
+def build(bld):
+    bld.env.append_value('DEFINES', ['BLE_BOOTLOADER=1'])
+
+    sys.path.append(bld.path.find_node('../..').abspath())
+    from dialog_waf import get_sdk_node, collect_sdk_sources, generate_mem_ld
+
+    mem_ld_node = generate_mem_ld(bld, CUSTOM_CONFIG_H_PATH)
+
+    # Collect source files:
+    source_dirs = ['src', '../common/src']
+    sources = sum([bld.path.ant_glob('%s/**/*.c' % d)
+                   for d in source_dirs], [])
+    sdk_sources = [
+        'sdk/bsp/startup/vector_table.S',
+        'sdk/bsp/startup/startup_ARMCM0.S',
+        'sdk/bsp/startup/system_ARMCM0.c',
+        'sdk/bsp/startup/config.c',
+        'sdk/bsp/peripherals/src/hw_cpm.c',
+        'sdk/bsp/peripherals/src/hw_dma.c',
+        'sdk/bsp/peripherals/src/hw_gpio.c',
+        'sdk/bsp/peripherals/src/hw_spi.c',
+        'sdk/bsp/peripherals/src/hw_uart.c',
+        'sdk/bsp/peripherals/src/hw_watchdog.c',
+
+        # Used by system_ARMCM0.c:
+        'sdk/bsp/peripherals/src/hw_otpc.c',
+        'sdk/bsp/peripherals/src/sys_tcs.c',
+    ]
+    sources.extend(collect_sdk_sources(bld, sdk_sources))
+
+    linkflags = ['-Wl,-Map,bt_da14681_boot.map',
+                 '-Wl,--build-id=sha1']
+
+    # Includes:
+    includes = ['include', '../common/include', '../../include', 'config']
+    elf_node = bld.path.get_bld().make_node('bt_da14681_boot.elf')
+    bld.program(features='c asm cprogram',
+                source=sources,
+                includes=includes,
+                target=elf_node,
+                lib=['gcc'],
+                linkflags=linkflags,
+                ldscript=mem_ld_node,
+                inject_include_files=[CUSTOM_CONFIG_H_PATH],
+                use=['dialog_sdk_includes', 'dialog_board_boot',
+                     'pblibc-cm0', 'libutil_includes', 'libutil-cm0'])
+
+    bld.add_manual_dependency(elf_node, mem_ld_node)
+
+    bin_node = elf_node.change_ext('.bin')
+    bld(rule=waftools.objcopy.objcopy_bin, source=elf_node, target=bin_node)
+
+    def create_bt_patch_resource(task):
+        bin_data = task.inputs[0].read('rb')
+        reso = ResourceObject(ResourceDefinition('raw', 'BT_BOOT_IMAGE', None,
+                              storage=task.generator.storage), bin_data)
+        reso.dump(task.outputs[0])
+
+    reso_node = elf_node.change_ext('.bin.reso')
+    bld(rule=create_bt_patch_resource, source=bin_node, target=reso_node,
+        storage=bld.get_bluetooth_fw_storage())
+
+    bld.DYNAMIC_RESOURCES.append(reso_node)
+
+def configure(ctx):
+    pass
+
+
+# vim:filetype=python

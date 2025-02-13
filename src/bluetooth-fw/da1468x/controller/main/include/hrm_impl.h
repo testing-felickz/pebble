@@ -1,0 +1,32 @@
+/*
+ * Copyright 2024 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#pragma once
+
+#include <bluetooth/hrm_service.h>
+
+#include <stdbool.h>
+#include <stdint.h>
+
+void hrm_service_init(bool is_hrm_supported_and_enabled);
+
+void hrm_service_register(uint16_t start_hdl);
+
+void hrm_service_handle_measurement(const BleHrmServiceMeasurement *measurement,
+                                    const BTDeviceInternal *permitted_devices,
+                                    size_t num_permitted_devices);
+
+void hrm_service_handle_enable(bool enable);

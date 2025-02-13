@@ -19,6 +19,10 @@ def build(bld):
         # Skip building sources for local builds, like unit tests.
         return
 
+    if bld.uses_dialog_bluetooth():
+        build_lib('libos-dialog', bld.all_envs['cortex-m0'],
+                  ['dialog_fw_includes', 'dialog_sdk_includes'])
+
     build_lib('libos', bld.env, ['fw_includes', 'freertos'])
 
 

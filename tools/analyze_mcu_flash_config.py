@@ -79,6 +79,25 @@ class DialogElfConfig(Config):
         return (sysram_start, cacheram_end)
 
 
+class DialogBootElfConfig(DialogElfConfig):
+    def rel_elf_path(self):
+        return '../build/src/bluetooth-fw/da1468x/controller/' \
+               'boot/bt_da14681_boot.elf'
+
+
+class DialogMainElfConfig(DialogElfConfig):
+    def rel_elf_path(self):
+        return '../build/src/bluetooth-fw/da1468x/controller/' \
+               'main/bt_da14681_main.elf'
+
+    def lib_paths(self):
+        libble_stack_path = self.abs_path(
+            '../src/bluetooth-fw/da1468x/vendor/bt-dialog-sdk/sdk/interfaces/'
+            'ble_stack/DA14681-01-Debug/libble_stack_da14681_01.a')
+        return [libble_stack_path]
+
 CONFIG_CLASSES = {
     'tintin': TintinElfConfig,
+    'dialog-boot': DialogBootElfConfig,
+    'dialog-main': DialogMainElfConfig,
 }

@@ -1,0 +1,191 @@
+import copy
+import os
+from waflib.ConfigSet import ConfigSet
+from waflib.Configure import conf
+import waflib.Logs
+
+from elftools.elf.elffile import ELFFile
+
+
+@conf
+def get_bluetooth_fw_storage(ctx):
+    from resources.types.resource_definition import StorageType
+    if ctx.env.BT_FW_BUILTIN:
+        return StorageType.builtin
+    else:
+        is_prf = (ctx.variant == 'prf')
+        return StorageType.builtin if is_prf else StorageType.pbpack
+
+
+@conf
+def get_dialog_ic_step_define(ctx):
+    chip_rev_step = None
+    if ctx.env.bt_controller == 'da14681-00':
+        chip_rev_step = 'D'
+    elif ctx.env.bt_controller == 'da14681-01':
+        chip_rev_step = 'E'
+    else:
+        raise Exeception('Unknown bt_controller %s' % ctx.env.bt_controller)
+    return ('dg_configBLACK_ORCA_IC_STEP=BLACK_ORCA_IC_STEP_%s' % chip_rev_step)
+
+def _recurse(ctx):
+    ctx.recurse("controller/boot")
+    ctx.recurse("controller/main")
+
+
+def _export_dialog_sdk_includes(bld):
+    sdk_node = bld.path.find_node('vendor/bt-dialog-sdk')
+    sdk_headers = sdk_node.ant_glob('sdk/bsp/**/include/*.h '
+                                    'sdk/bsp/config/*.h '
+                                    'sdk/bsp/free_rtos/portable/**/*.h '
+                                    'sdk/bsp/osal/*.h '
+                                    'sdk/interfaces/ble/**/*.h '
+                                    'sdk/interfaces/ble_services/include/*.h ',
+                                    excl='sdk/interfaces/ble/include/util/* '
+                                         'sdk/bsp/system/loaders/**')
+    sdk_includes = set([h.parent.abspath() for h in sdk_headers])
+    bld(export_includes=sdk_includes, name='dialog_sdk_includes')
+
+
+def options(opt):
+    opt.add_option('--bt_fw_builtin', action='store_true', default=False,
+                   help='Store BT firmware images into `built-in` resources '
+                        'instead of system resources (skip image_resources).')
+
+
+def handle_configure_options(conf):
+    conf.env.BT_FW_BUILTIN = conf.options.bt_fw_builtin
+    conf.env.bt_controller = conf.options.bt_controller
+    # insert more here in the future
+
+def configure(conf):
+    # For DA14681, derive a new environment from 'cortex-m0':
+    conf.setenv('da14681x', conf.all_envs['cortex-m0'])
+
+    # Handle configure options
+    handle_configure_options(conf)
+
+    # Configure optimization:
+    is_optimized = True
+    optimize_flag = '-Os' if is_optimized else '-O0'
+    conf.env.append_unique('CFLAGS', [optimize_flag])
+    if is_optimized:
+        # This define controls timing values that are different depending
+        # on the optimization level. See for example jump_table.c and
+        # ble_config.c in the Dialog SDK.
+        conf.env.append_unique('DEFINES', ['RELEASE_BUILD'])
+
+    if conf.is_silk():
+        platform = 'SILK'
+    elif conf.is_cutts():
+        platform = 'CALCULUS'
+    elif conf.is_robert():
+        platform = 'ROBERT'
+    else:
+        conf.fatal('No platform specified for {}!'.format(conf.options.board))
+
+    conf.env.append_unique('DEFINES', [
+        'PLATFORM_' + platform + '=1'
+        ])
+
+    conf.env.append_unique('DEFINES', [
+        'BOARD_' + conf.options.board.upper() + '=1'
+        ])
+    conf.env.append_unique('DEFINES', ['BT_CONTROLLER_BUILD=1'])
+    conf.env.BOARD = conf.options.board
+
+    conf.env.append_unique('DEFINES', [
+        conf.get_dialog_ic_step_define()
+    ])
+
+    conf.load('c_inject_include_files')
+    conf.load('c_preprocessor')
+
+    _recurse(conf)
+
+
+def build(bld):
+    if 'da14681x' not in bld.all_envs:
+        bld.fatal("Whoops! You need to ./waf configure again...")
+
+    # Build host "BT Driver" library:
+    sources = bld.path.ant_glob('host/**/*.c common/**/*.c')
+    bld.stlib(source=sources,
+              target='bt_driver',
+              includes=['host', 'include'],
+              defines=['FILE_LOG_COLOR=LOG_COLOR_BLUE'],
+              use=[
+                  # Note: Dialog SDK also includes a "free_rtos/includes/list.h" header.
+                  # Put 'fw_includes' before 'dialog_sdk_includes' to
+                  # make sure libutil's "util/list.h" gets picked first:
+                'fw_includes',
+                'freertos',
+                'root_includes',
+                'dialog_sdk_includes',
+                'driver_dma',
+              ])
+
+    # Build DA14681 firmwares:
+    bld.env = bld.all_envs['da14681x']
+    if bld.variant == 'prf':
+        bld.env.append_unique('DEFINES', ['RECOVERY_FW=1'])
+    _export_dialog_sdk_includes(bld)
+    bld.recurse("controller/board")
+    _recurse(bld)
+
+    bld.add_post_fun(size_dialog_fw)
+
+def size_dialog_fw(ctx):
+    dialog_bin = ctx.get_bluetooth_fw_node()
+    dialog_elf = dialog_bin.change_ext('.elf')
+
+    if dialog_elf is None:
+        ctx.fatal('No dialog ELF found for size')
+
+    sections = get_elf_sections(dialog_elf.abspath())
+
+    # Sum the sections:
+    TEXT_SECTIONS = ['.text', '.text_crc32']
+    # .ARM.exidx only exists if synthetic instructions (i.e long divide) are pulled in
+    DATA_SECTIONS = ['.vt_stash_region', '.note.gnu.build-id', '.zero.table', '.data', '.ARM.exidx',
+                     'retention_mem_uninit', '.debug_region']
+    BSS_SECTIONS = ['.stack_dummy', '.bss', '.log_buffer']
+
+    text = sum([size for addr, size in [sections[x] for x in TEXT_SECTIONS]])
+    data = sum([size for addr, size in [sections[x] for x in DATA_SECTIONS if x in sections]])
+    bss = sum([size for addr, size in [sections[x] for x in BSS_SECTIONS]])
+
+    total = text + data + bss
+    output = ('{:>7}    {:>7}    {:>7}    {:>7}    {:>7} filename\n'
+              '{:7}    {:7}    {:7}    {:7}    {:7x} bt_da14861_main.elf'.
+              format('text', 'data', 'bss', 'dec', 'hex', text, data, bss, total, total))
+    waflib.Logs.pprint('BLUE', '\n' + output)
+
+    # Calculate free RAM (delta between RETENTION_BLE and .log_buffer)
+    log_buffer_addr, log_buffer_size = sections['.log_buffer']
+    retention_addr = sections['RETENTION_BLE'][0]
+    log_buffer_end = log_buffer_addr + log_buffer_size
+    ram_unused = retention_addr - log_buffer_end
+    if ram_unused < 0:
+        ctx.fatal('Bluetooth FW too large. .bss overlaps RETENTION_BLE by %d bytes' % -ram_unused)
+    else:
+        waflib.Logs.pprint('BLUE', 'RAM: %d free' % ram_unused)
+
+    # Calculate size of the .bin
+    bt_resource_size = os.path.getsize(dialog_bin.abspath())
+    waflib.Logs.pprint('BLUE', 'Resource size: %d' % bt_resource_size)
+
+
+def get_elf_sections(filename):
+    section_dict = {}
+
+    with open(filename, 'rb') as f:
+        elffile = ELFFile(f)
+
+        for section in elffile.iter_sections():
+            if not section.is_null():
+                section_dict[section.name] = (section['sh_addr'], section['sh_size'])
+
+    return section_dict
+
+# vim:filetype=python

@@ -5,6 +5,24 @@ import waflib.Logs
 
 from waflib.Configure import conf
 
+@conf
+def get_bluetooth_fw_node(ctx, variant='main', subdir=None):
+    subpath = ('src/bluetooth-fw/da1468x/controller/{variant}/bt_da14681_{variant}.bin'
+               .format(variant=variant))
+    if subdir:
+        subpath = os.path.join(subdir, subpath)
+    return ctx.path.get_bld().make_node(subpath)
+
+
+@conf
+def get_bluetooth_fw_node_prf(ctx):
+    return ctx.get_bluetooth_fw_node(subdir='prf')
+
+
+@conf
+def get_bluetooth_fw_node_boot(ctx):
+    return ctx.get_bluetooth_fw_node('boot')
+
 
 @conf
 def uses_dialog_bluetooth(ctx):
@@ -16,8 +34,7 @@ def _recurse(ctx):
         # TODO: replace with real FW
         ctx.recurse('stub')
     elif ctx.uses_dialog_bluetooth():
-        # TODO: replace with real FW
-        ctx.recurse('stub')
+        ctx.recurse('da1468x')
     elif ctx.env.bt_controller == 'qemu':
         ctx.recurse('qemu')
     else:
@@ -28,6 +45,7 @@ def options(opt):
     opt.add_option('--bt_controller', action='store', default=None,
                    help='Override Bluetooth controller to build for',
                    choices=['da14681-01', 'da14681-00', 'cc2564x', 'qemu'])
+    opt.recurse('da1468x')
 
 
 def configure(conf):
